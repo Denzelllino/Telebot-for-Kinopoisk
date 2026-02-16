@@ -20,6 +20,11 @@ def random_movie_request():
 
     Использует endpoint 'v1.4/movie/random' API Кинопоиска.
 
+    Добавлено 16.02.26
+    Вставка '?notNullFields=name&notNullFields=description' исключает фильмы в
+    которых нет названия и описания. Тем самым исправляет ошибку когда в JSON-ответе
+    нет названия либо названия (или они находятся в словаре names), а также отсутствует описание.
+
     Возвращает:
         dict: Распарсенный JSON-ответ с данными о случайном фильме.
 
@@ -28,7 +33,7 @@ def random_movie_request():
         json.JSONDecodeError: При ошибке декодирования JSON-ответа.
     """
 
-    request_url = url + function['random']
+    request_url = url + function['random'] + f'?notNullFields=name&notNullFields=description'
     response_api = requests.get(request_url, headers=headers)
     data = json.loads(response_api.text)
     return data
