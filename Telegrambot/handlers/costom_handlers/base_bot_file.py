@@ -1,53 +1,47 @@
-from telebot.types import Message
-from Telegrambot.config_data.config import DEFAULT_COMMANDS
-from loader import bot, BOT_INFO
+import os
+from dotenv import load_dotenv
+import telebot
 
-from Telegrambot.handlers.costom_handlers.random_handlers import random_film
-from Telegrambot.keyboards.inline.keyboards import main_menu, pager, history_actions, content_type_kb
-from Telegrambot.handlers.default_handlers.help import bot_help
-from Telegrambot.keyboards.reply.reply_button import markup, remove_keyboard
 from Telegrambot.api.kinopoisk_api import search_movies, search_by_rating, search_by_budget
-from Telegrambot.database.db import save_item, get_history, set_viewed
-from Telegrambot.utils.card_text import card_text
+from Telegrambot.database.db import init_db, save_item, get_history, set_viewed
+from Telegrambot.keyboards.inline.keyboards import main_menu, pager, history_actions, content_type_kb
 
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 user_state = {}
 
-@bot.message_handler(commands=['start'])
-def bot_start(message: Message):
-
-    bot.send_message(message.chat.id, f'Привет, {message.from_user.full_name}!')
-    bot.send_message(message.chat.id, f'Меня зовут {BOT_INFO.first_name}. Я буду твоим личным помощником '
-                                      f'в поиске фильма на вечер или просто для нескучного '
-                                      f'время припровождения.', reply_markup=markup)
-
-    bot.register_next_step_handler(message, on_click)
-
-def on_click(message):
-    if message.text == 'Посмотрим случайный фильм?':
-        bot.send_message(message.chat.id, f'Могу предложить фильм:', reply_markup=remove_keyboard)
-        random_film(message)
-    elif message.text == 'Давай найду твой фильм.':
-        bot.send_message(message.chat.id, f'Хорошо, давай посмотрим что я для тебя смогу найти:',
-                         reply_markup=remove_keyboard)
-        bot.send_message(message.chat.id, f'Выбери один из пунктов:', reply_markup=main_menu())
-    elif message.text == 'Не знаешь куда нажать? Жми сюда!':
-        bot_help(message, reply_markup=remove_keyboard)
-    elif message.text == 'Может позже!':
-        bot.send_message(message.chat.id, f'Хорошо, давай продолжим в следующий раз. Для повторения введи\n'
-                                          f'/start.', reply_markup=remove_keyboard)
-
+def card_text(item):
+    title = item.get("title") or item.get("name") or "Без названия"
+    desc = item.get("description") or item.get("shortDescription") or item.get("overview") or "Нет описания"
+    rating = item.get("rating")
+    if isinstance(rating, dict):
+        rating = rating.get("kp", "-")
+    rating = rating if rating is not None else "-"
+    year = item.get("year") or "-"
+    genres = ", ".join(g.get("name", "") for g in item.get("genres", []) if g.get("name")) or "-"
+    age = item.get("ageRating") or item.get("ratingMpaa") or "-"
+    poster = item.get("poster")
+    if isinstance(poster, dict):
+        poster = poster.get("url") or "-"
+    poster = poster or "-"
+    return (
+        f"Название: {title}\n"
+        f"Описание: {desc}\n"
+        f"Рейтинг: {rating}\n"
+        f"Год производства: {year}\n"
+        f"Жанр: {genres}\n"
+        f"Возрастной рейтинг: {age}\n"
+        f"Постер: {poster}"
+    )
 
 def start_flow(message, mode):
     user_state[message.from_user.id] = {"mode": mode}
     bot.send_message(message.chat.id, "Выберите тип контента:", reply_markup=content_type_kb())
 
-@bot.callback_query_handler(func=lambda call: call.data == "base_menu")
-def base_menu_callback(call):
-    bot.answer_callback_query(call.id)
-    bot.send_message(call.message.chat.id, "Выберите команду:", reply_markup=main_menu())
-
-@bot.message_handler(commands=["base_menu"])
-def base_menu_command(message):
+@bot.message_handler(commands=["start"])
+def start(message):
     bot.send_message(message.chat.id, "Выберите команду:", reply_markup=main_menu())
 
 @bot.message_handler(commands=["help"])
@@ -61,7 +55,6 @@ def help_cmd(message):
 @bot.callback_query_handler(func=lambda call: call.data in {
     "movie_search", "movie_by_rating", "low_budget_movie", "high_budget_movie", "history"
 })
-
 def menu_handler(call):
     bot.answer_callback_query(call.id)
     if call.data == "history":
@@ -73,9 +66,9 @@ def menu_handler(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("type:"))
 def type_handler(call):
     bot.answer_callback_query(call.id)
-    state = user_state.get(call.from_user.id, {})
-    #if not state:
-    #   return
+    state = user_state.get(call.from_user.id)
+    if not state:
+        return
     state["type"] = call.data.split(":", 1)[1]
     msg = bot.send_message(call.message.chat.id, "Введите название фильма/сериала:")
     bot.register_next_step_handler(msg, ask_genre)
@@ -102,8 +95,7 @@ def process_count(message):
         return
 
     state["count"] = count
-    bot_id = bot.get_me().id
-    mode = user_state[bot_id]['mode']
+    mode = state["mode"]
     if mode == "movie_search":
         data = search_movies(state.get("title", ""), limit=count, media_type=state.get("type"), genre=state.get("genre", ""))
         state["results"] = data.get("docs", [])[:count]
@@ -169,8 +161,8 @@ def process_budget(message):
 def show_results(message, state):
     results = state.get("results", [])
     if not results:
-        bot.send_message(message.chat.id, "Ничего не найдено. Давай попробуем снова.")
-        return base_menu_command(message)
+        bot.send_message(message.chat.id, "Ничего не найдено.")
+        return
 
     for item in results:
         save_item(message.from_user.id, item)
@@ -227,3 +219,6 @@ def history_status_handler(call):
     set_viewed(int(hid), action == "viewed")
     bot.answer_callback_query(call.id, "Статус обновлён")
 
+if __name__ == "__main__":
+    init_db()
+    bot.infinity_polling()

@@ -1,1 +1,1 @@
-from . import kinopoisk_api
+from . import kinopoisk_api_old

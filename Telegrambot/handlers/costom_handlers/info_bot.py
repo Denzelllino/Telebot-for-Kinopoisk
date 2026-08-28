@@ -1,6 +1,6 @@
 from telebot.types import Message
-from config_data.config import DEFAULT_COMMANDS
-from loader import bot, BOT_INFO
+from Telegrambot.config_data.config import DEFAULT_COMMANDS
+from Telegrambot.loader import bot, BOT_INFO
 
 @bot.message_handler(commands=['info_bot'])
 def bot_informations(message: Message):
